@@ -838,217 +838,265 @@
 
     <!-- ★ここだけ差し替え済み（送信形式を x-www-form-urlencoded に変更） -->
     <script>
-    function showPage(pageId) {
-        document.querySelectorAll('.page-transition').forEach(p => p.classList.remove('active'));
-        const target = document.getElementById(pageId);
-        if (target) {
-            target.classList.add('active');
-            window.scrollTo(0, 0);
+        // ================================
+        // SPAページ切替 + ブラウザ戻る/進む対応
+        // ================================
+        function showPage(pageId, opts = {}) {
+            const { push = true } = opts;
+
+            // 表示切替
+            document.querySelectorAll('.page-transition').forEach(p => p.classList.remove('active'));
+            const target = document.getElementById(pageId);
+            if (target) {
+                target.classList.add('active');
+                window.scrollTo(0, 0);
+            }
+
+            // 履歴（URL）更新：#pageId を付ける
+            if (push) {
+                const newHash = `#${pageId}`;
+                if (location.hash !== newHash) {
+                    history.pushState({ pageId }, "", newHash);
+                } else {
+                    // 同じhashでも state を揃えたい場合は replaceState
+                    history.replaceState({ pageId }, "", newHash);
+                }
+            }
         }
-    }
 
-    // ================================
-    // RFQ フォーム：前回入力保持（localStorage）
-    // ================================
-    const RFQ_STORAGE_KEY = "rfq_form_data_v1";
+        // a href="#" onclick="showPage(...)" のデフォルト遷移を一括で止める（HTMLを極力変更しない）
+        document.addEventListener("click", (e) => {
+            const a = e.target.closest("a");
+            if (!a) return;
 
-    function saveRfqFormData() {
-        const form = document.getElementById("rfq-form");
-        if (!form) return;
-
-        const data = {};
-        form.querySelectorAll("input, textarea").forEach(el => {
-
-            if (!el.name) return;
-
-            // ▼▼▼ 追加：同意チェックは保存しない ▼▼▼
-            if (el.id === "privacy-consent") return;
-            // ▲▲▲ 追加 ▲▲▲
-
-            if (
-                el.type === "checkbox" ||
-                el.type === "radio" ||
-                el.type === "submit" ||
-                el.type === "button"
-            ) return;
-
-            data[el.name] = el.value ?? "";
+            const href = (a.getAttribute("href") || "").trim();
+            const oc = (a.getAttribute("onclick") || "");
+            if (href === "#" && oc.includes("showPage")) {
+                e.preventDefault();
+            }
         });
 
-        try {
-            localStorage.setItem(RFQ_STORAGE_KEY, JSON.stringify(data));
-        } catch (e) {
-            console.warn("localStorage save failed:", e);
-        }
-    }
-
-    function restoreRfqFormData() {
-        const form = document.getElementById("rfq-form");
-        if (!form) return;
-
-        let raw = null;
-        try { raw = localStorage.getItem(RFQ_STORAGE_KEY); } catch (_) {}
-        if (!raw) return;
-
-        let data = null;
-        try { data = JSON.parse(raw); } catch (_) { return; }
-        if (!data || typeof data !== "object") return;
-
-        Object.keys(data).forEach(name => {
-
-            if (name === "privacy_consent") return; // ← 追加
-
-            const el = form.querySelector(`[name="${name}"]`);
-            if (el) el.value = data[name];
-        });
-    }
-
-    function clearRfqFormData() {
-        try { localStorage.removeItem(RFQ_STORAGE_KEY); } catch (_) {}
-    }
-
-    // 成功画面からフォームへ戻す（チェック状態に応じて復元/クリア）
-    function backToForm() {
-        const form = document.getElementById("rfq-form");
-        const successMsg = document.getElementById("success-msg");
-        const errorMsg = document.getElementById("error-msg");
-        const submitBtn = document.getElementById("submit-btn");
-        const keep = document.getElementById("keep-input");
-
-        // 画面切替
-        if (successMsg) successMsg.classList.add("hidden");
-        if (form) form.classList.remove("hidden");
-
-        // UIを送信前へ戻す
-        if (errorMsg) errorMsg.classList.add("hidden");
-        if (submitBtn) {
-            submitBtn.disabled = false;
-            submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
-        }
-        
-        // ★追加：同意チェックは常にOFFへ戻す（保持しない／法的同意の原則）
-        const consent = document.getElementById("privacy-consent");
-        if (consent) consent.checked = false;
-
-
-        // 復元 or クリア
-        if (keep && keep.checked) {
-            restoreRfqFormData();
-        } else {
-            if (form) form.reset();
-            clearRfqFormData();
-        }
-
-        // （念のため）フォーム先頭へ
-        try { form?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) {}
-    }
-
-    // ================================
-    // RFQフォーム送信を Workers に差し替え（FormSubmitは残す）
-    // 送信形式を「x-www-form-urlencoded」にして安定化
-    // ================================
-    document.addEventListener("DOMContentLoaded", () => {
-        const form = document.getElementById("rfq-form");
-        if (!form) return;
-
-        const submitBtn = document.getElementById("submit-btn");
-        const errorMsg = document.getElementById("error-msg");
-        const successMsg = document.getElementById("success-msg");
-
-        // ★追加：チェックボックスは必ずデフォルトOFF（ブラウザ復元対策）
-        const keep = document.getElementById("keep-input");
-        if (keep) keep.checked = false;
-
-        // ★追加：戻る/更新で bfcache 復元された場合もOFFに戻す
-        window.addEventListener("pageshow", () => {
-            const k = document.getElementById("keep-input");
-            if (k) k.checked = false;
-            
-            // ★追加：同意チェックもOFFへ
-            const c = document.getElementById("privacy-consent");
-            if (c) c.checked = false;
+        // ブラウザ戻る/進むでページ復元
+        window.addEventListener("popstate", () => {
+            const hash = (location.hash || "").replace("#", "");
+            const pageId = hash || "top";
+            showPage(pageId, { push: false });
         });
 
-        form.addEventListener("submit", async (e) => {
-            e.preventDefault();
+        // 初回表示：hash があればそこを表示（例: /#privacy）
+        document.addEventListener("DOMContentLoaded", () => {
+            const hash = (location.hash || "").replace("#", "");
+            if (hash) showPage(hash, { push: false });
+            else {
+                // state を揃える（任意）
+                history.replaceState({ pageId: "top" }, "", "#top");
+            }
+        });
 
-            // ▼希望納期：送信時のみ過去日付チェック（入力制限なし）
-            const deliveryEl = form.querySelector('[name="希望納期"]');
-            if (deliveryEl) {
-              const v = (deliveryEl.value || "").trim();
-              // YYYY-MM-DD（type=date）または YYYY/MM/DD を想定して軽く判定
-              const normalized = v.replace(/\//g, "-");
-              const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        // ================================
+        // RFQ フォーム：前回入力保持（localStorage）
+        // ================================
+        const RFQ_STORAGE_KEY = "rfq_form_data_v1";
 
-              if (m) {
-                const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
-                const selected = new Date(y, mo - 1, d);
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                selected.setHours(0, 0, 0, 0);
+        function saveRfqFormData() {
+            const form = document.getElementById("rfq-form");
+            if (!form) return;
 
-                // 無効日付（2/30等）対策
+            const data = {};
+            form.querySelectorAll("input, textarea").forEach(el => {
+                if (!el.name) return;
+
+                // ▼▼▼ 同意チェックは保存しない ▼▼▼
+                if (el.id === "privacy-consent") return;
+                // ▲▲▲ ここまで ▲▲▲
+
                 if (
-                  selected.getFullYear() !== y ||
-                  selected.getMonth() !== mo - 1 ||
-                  selected.getDate() !== d
-                ) {
-                  alert("希望納期をご確認下さい");
-                  if (deliveryEl.focus) deliveryEl.focus();
-                  if (submitBtn) {
-                    submitBtn.disabled = false;
-                    submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
-                  }
-                  return; // 送信中止
-                }
+                    el.type === "checkbox" ||
+                    el.type === "radio" ||
+                    el.type === "submit" ||
+                    el.type === "button"
+                ) return;
 
-                // 過去日付なら停止
-                if (selected < today) {
-                  alert("希望納期をご確認下さい");
-                  if (deliveryEl.focus) deliveryEl.focus();
-                  if (submitBtn) {
-                    submitBtn.disabled = false;
-                    submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
-                  }
-                  return; // 送信中止
-                }
-              }
-            }
-        
-            // UI初期化
-            if (errorMsg) errorMsg.classList.add("hidden");
-            if (submitBtn) {
-                submitBtn.disabled = true;
-                submitBtn.classList.add("opacity-70", "cursor-not-allowed");
-            }
+                data[el.name] = el.value ?? "";
+            });
 
             try {
-                const fd = new FormData(form);
+                localStorage.setItem(RFQ_STORAGE_KEY, JSON.stringify(data));
+            } catch (e) {
+                console.warn("localStorage save failed:", e);
+            }
+        }
 
-                // FormData -> JSON（日本語nameでも安全）
-                const payload = {};
-                fd.forEach((v, k) => { payload[k] = String(v); });
+        function restoreRfqFormData() {
+            const form = document.getElementById("rfq-form");
+            if (!form) return;
 
-                const res = await fetch("https://everlink-rfq.hideakitamura714.workers.dev/", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json; charset=UTF-8" },
-                  body: JSON.stringify(payload),
-                });
+            let raw = null;
+            try { raw = localStorage.getItem(RFQ_STORAGE_KEY); } catch (_) {}
+            if (!raw) return;
 
-                if (res.ok) {
-                    // 送信成功時のみ、前回入力として保存
-                    saveRfqFormData();
+            let data = null;
+            try { data = JSON.parse(raw); } catch (_) { return; }
+            if (!data || typeof data !== "object") return;
 
-                    // ★追加：成功画面を出す直前に必ずデフォルトOFF
-                    const k = document.getElementById("keep-input");
-                    if (k) k.checked = false;
+            Object.keys(data).forEach(name => {
+                if (name === "privacy_consent") return; // 念のため
 
-                    form.classList.add("hidden");
-                    if (successMsg) successMsg.classList.remove("hidden");
-                } else {
-                    let txt = "";
-                    try { txt = await res.text(); } catch (_) {}
-                    console.error("Worker response error:", res.status, txt);
+                const el = form.querySelector(`[name="${name}"]`);
+                if (el) el.value = data[name];
+            });
+        }
+
+        function clearRfqFormData() {
+            try { localStorage.removeItem(RFQ_STORAGE_KEY); } catch (_) {}
+        }
+
+        // 成功画面からフォームへ戻す（チェック状態に応じて復元/クリア）
+        function backToForm() {
+            const form = document.getElementById("rfq-form");
+            const successMsg = document.getElementById("success-msg");
+            const errorMsg = document.getElementById("error-msg");
+            const submitBtn = document.getElementById("submit-btn");
+            const keep = document.getElementById("keep-input");
+
+            // 画面切替
+            if (successMsg) successMsg.classList.add("hidden");
+            if (form) form.classList.remove("hidden");
+
+            // UIを送信前へ戻す
+            if (errorMsg) errorMsg.classList.add("hidden");
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
+            }
+
+            // 同意チェックは常にOFFへ戻す（保持しない／法的同意の原則）
+            const consent = document.getElementById("privacy-consent");
+            if (consent) consent.checked = false;
+
+            // 復元 or クリア
+            if (keep && keep.checked) {
+                restoreRfqFormData();
+            } else {
+                if (form) form.reset();
+                clearRfqFormData();
+            }
+
+            // 念のためフォーム先頭へ
+            try { form?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) {}
+        }
+
+        // ================================
+        // RFQフォーム送信（Workers）
+        // ================================
+        document.addEventListener("DOMContentLoaded", () => {
+            const form = document.getElementById("rfq-form");
+            if (!form) return;
+
+            const submitBtn = document.getElementById("submit-btn");
+            const errorMsg = document.getElementById("error-msg");
+            const successMsg = document.getElementById("success-msg");
+
+            // チェックボックスは必ずデフォルトOFF（ブラウザ復元対策）
+            const keep = document.getElementById("keep-input");
+            if (keep) keep.checked = false;
+
+            // 戻る/更新で bfcache 復元された場合もOFFに戻す
+            window.addEventListener("pageshow", () => {
+                const k = document.getElementById("keep-input");
+                if (k) k.checked = false;
+
+                const c = document.getElementById("privacy-consent");
+                if (c) c.checked = false;
+            });
+
+            form.addEventListener("submit", async (e) => {
+                e.preventDefault();
+
+                // 希望納期：送信時のみ過去日付チェック（入力制限なし）
+                const deliveryEl = form.querySelector('[name="希望納期"]');
+                if (deliveryEl) {
+                    const v = (deliveryEl.value || "").trim();
+                    const normalized = v.replace(/\//g, "-");
+                    const m = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+
+                    if (m) {
+                        const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+                        const selected = new Date(y, mo - 1, d);
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        selected.setHours(0, 0, 0, 0);
+
+                        // 無効日付（2/30等）対策
+                        if (
+                            selected.getFullYear() !== y ||
+                            selected.getMonth() !== mo - 1 ||
+                            selected.getDate() !== d
+                        ) {
+                            alert("希望納期をご確認下さい");
+                            if (deliveryEl.focus) deliveryEl.focus();
+                            if (submitBtn) {
+                                submitBtn.disabled = false;
+                                submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
+                            }
+                            return;
+                        }
+
+                        // 過去日付なら停止
+                        if (selected < today) {
+                            alert("希望納期をご確認下さい");
+                            if (deliveryEl.focus) deliveryEl.focus();
+                            if (submitBtn) {
+                                submitBtn.disabled = false;
+                                submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
+                            }
+                            return;
+                        }
+                    }
+                }
+
+                // UI初期化
+                if (errorMsg) errorMsg.classList.add("hidden");
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.classList.add("opacity-70", "cursor-not-allowed");
+                }
+
+                try {
+                    const fd = new FormData(form);
+    
+                    // FormData -> JSON
+                    const payload = {};
+                    fd.forEach((v, k) => { payload[k] = String(v); });
+
+                    const res = await fetch("https://everlink-rfq.hideakitamura714.workers.dev/", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json; charset=UTF-8" },
+                        body: JSON.stringify(payload),
+                    });
+
+                    if (res.ok) {
+                        saveRfqFormData();
+    
+                        // 成功画面を出す直前に必ずデフォルトOFF
+                        const k = document.getElementById("keep-input");
+                        if (k) k.checked = false;
+
+                        form.classList.add("hidden");
+                        if (successMsg) successMsg.classList.remove("hidden");
+                    } else {
+                        let txt = "";
+                        try { txt = await res.text(); } catch (_) {}
+                        console.error("Worker response error:", res.status, txt);
+
+                        if (errorMsg) errorMsg.classList.remove("hidden");
+                        if (submitBtn) {
+                            submitBtn.disabled = false;
+                            submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
+                        }
+                    }
+                } catch (err) {
+                    console.error("Worker fetch exception:", err);
 
                     if (errorMsg) errorMsg.classList.remove("hidden");
                     if (submitBtn) {
@@ -1056,16 +1104,8 @@
                         submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
                     }
                 }
-            } catch (err) {
-                console.error("Worker fetch exception:", err);
-
-                if (errorMsg) errorMsg.classList.remove("hidden");
-                if (submitBtn) {
-                    submitBtn.disabled = false;
-                    submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
-                }
-            }
+            });
         });
-    });    </script>
+    </script>
 </body>
 </html>
