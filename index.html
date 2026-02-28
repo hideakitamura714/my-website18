@@ -925,6 +925,11 @@
             submitBtn.disabled = false;
             submitBtn.classList.remove("opacity-70", "cursor-not-allowed");
         }
+        
+        // ★追加：同意チェックは常にOFFへ戻す（保持しない／法的同意の原則）
+        const consent = document.getElementById("privacy-consent");
+        if (consent) consent.checked = false;
+
 
         // 復元 or クリア
         if (keep && keep.checked) {
@@ -958,6 +963,10 @@
         window.addEventListener("pageshow", () => {
             const k = document.getElementById("keep-input");
             if (k) k.checked = false;
+            
+            // ★追加：同意チェックもOFFへ
+            const c = document.getElementById("privacy-consent");
+            if (c) c.checked = false;
         });
 
         form.addEventListener("submit", async (e) => {
